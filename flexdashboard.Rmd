@@ -1,0 +1,120 @@
+---
+title: "Blown Film KPI Dashboard"
+date: 2018-01-17
+output: flexdashboard::flex_dashboard
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+
+library(flexdashboard)
+library(zoo)
+library(dplyr)
+library(plotly)
+
+waste.data <- read.csv('waste_percent.csv', header = TRUE, stringsAsFactors = FALSE) 
+
+waste.data$Year.Month <- as.Date(as.yearmon(waste.data$Year.Month))
+data.scrap.format <- waste.data %>%
+     mutate(Year = factor(as.character(Year)), Month = factor(as.character(Month)))
+
+max.h <- max(data.scrap.format$Percent.Scrap) + .01
+
+#------------------------------
+
+total <- read.csv('cleandata.csv', header = TRUE, stringsAsFactors = FALSE)
+
+
+#------------------------------
+
+data.plotly <- total[which(total$MO != 0),]
+data.plotly <- data.plotly[which(!is.na(data.plotly$Work.Center)),]
+data.plotly.grouped <- data.plotly %>%
+     group_by(Work.Center, Item) %>%
+     summarise(Count = n(), Scrap.Ratio = sum(Actual.Scrap.Total)/sum(Net.Issue.Total), Total.Net = sum(Net.Issue.Total), Total.Scrap = sum(Actual.Scrap.Total)) %>%
+     as.data.frame(.)
+
+
+
+#------------------------------
+
+
+library(chorddiag)
+library(reshape2)
+
+#Separate by workcenter
+EM3 <- total[which(total$Work.Center == 'WXEM2'),] %>%
+     select(MO, Item, MO.Before, Item.Before, Weight, Net.Issue.Total, Actual.Scrap.Total) %>%
+     mutate(Weight.Net = Weight * Net.Issue.Total, Weight.Scrap = Weight * Actual.Scrap.Total) %>%
+     mutate(Scrap.Percent = Weight.Scrap / Weight.Net)
+
+#### CAREFUL -> NEED TO MAKE SURE 0 == MAINTENANCE AND NOT UNDEFINED MOS
+#Convert MO == 0 to 'MAINTENANCE'
+EM3[which(EM3$MO.Before == 0),]$Item.Before <- 'MAINTENANCE'
+
+EM3.cor <- EM3 %>%
+     select(Item, Item.Before, Weight.Scrap) %>%
+     group_by(Item, Item.Before) %>%
+     summarise(Scrap = sum(Weight.Scrap)) %>%
+     as.data.frame(.)
+
+EM3.high.scrap <- EM3.cor %>%
+     filter(Scrap >= 2000)
+     
+df <- dcast(EM3.high.scrap, Item.Before ~ Item, na.rm = TRUE)
+rows <- df[,1]
+final <- as.matrix(df[,-1])
+row.names(final) <- rows
+
+```
+
+Column
+-------------------------------------  
+
+### Scrap in Blown Film
+
+```{r plotly, echo = FALSE}
+
+renderPlotly({
+  plot_ly(data = data.scrap.format) %>%
+     add_trace(x = ~Year.Month, y = ~Percent.Scrap, type = 'bar', name = 'Monthly Scrap',
+               marker = list(color = 'rgba(55, 128, 191, 0.2)',
+                             line = list(color = 'rgba(55, 128, 191, 0.7)', width = 2))) %>%
+     add_trace(x = ~Year.Month, y = ~MA.3M, type = 'scatter', mode = 'lines', name = ' 3 Month MA') %>%
+     add_trace(x = ~Year.Month, y = ~MA.6M, type = 'scatter', mode = 'lines', name = ' 6 Month MA') %>%
+     add_trace(x = ~Year.Month, y = ~MA.12M, type = 'scatter', mode = 'lines', name = ' 12 Month MA') %>%
+     layout(title = '% Actual Scrap in Blown Film',
+            yaxis = list(range = c(0.06, max.h)))
+})
+
+```
+
+Column
+-------------------------------------  
+
+### Total Scrap by Workcenter
+
+```{r bubble chart, echo = FALSE}
+
+renderPlotly({
+  plot_ly(data = data.plotly.grouped, x = ~Count, y = ~Total.Scrap, text = ~Item, 
+             type = 'scatter', mode = 'markers', size = ~Total.Net, color = ~Work.Center, colors = 'Paired',
+             marker = list(opacity = 0.5, sizemode = 'diameter')) %>%
+     layout(title = 'Scrap vs Frequency and MO Size',
+            xaxis = list(showgrid = TRUE),
+            yaxis = list(showgrid = TRUE))
+
+})
+
+```
+
+
+<!-- ## Chord Diagram -->
+
+<!-- ```{r chord, fig.width=5, fig.height=5} -->
+
+<!-- c <- chorddiag(final, type = "bipartite", showTicks = F, groupnameFontsize = 14, groupnamePadding = 10, margin = 90) -->
+
+<!-- c -->
+<!-- ``` -->
+
